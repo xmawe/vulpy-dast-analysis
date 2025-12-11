@@ -1,0 +1,80 @@
+services:
+  # OWASP ZAP for DAST scanning (must start first)
+  owasp-zap:
+    image: ghcr.io/zaproxy/zaproxy:stable
+    container_name: owasp-zap
+    ports:
+      - "8090:8090"
+    command: zap.sh -daemon -host 0.0.0.0 -port 8090 -config api.addrs.addr.name=.* -config api.addrs.addr.regex=true -config api.key=dast-api-key-2025
+    networks:
+      - dast-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Vulpy Bad (Vulnerable version)
+  vulpy-bad:
+    build:
+      context: ./vulpy
+      dockerfile: Dockerfile
+    image: vulpy-bad:local
+    container_name: vulpy-bad
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_ENV=development
+      - APP_VERSION=bad
+    networks:
+      - dast-network
+    working_dir: /app/bad
+    command: python -c "from vulpy import app; app.run(debug=True, host='0.0.0.0', port=5000)"
+
+  # Vulpy Good (Secure version)
+  vulpy-good:
+    build:
+      context: ./vulpy
+      dockerfile: Dockerfile
+    image: vulpy-good:local
+    container_name: vulpy-good
+    ports:
+      - "5001:5000"
+    environment:
+      - FLASK_ENV=development
+      - APP_VERSION=good
+    networks:
+      - dast-network
+    working_dir: /app/good
+    command: python -c "from vulpy import app; app.run(debug=True, host='0.0.0.0', port=5000)"
+
+  # Jenkins for CI/CD pipeline
+  jenkins-dast:
+    build:
+      context: .
+      dockerfile: Dockerfile.jenkins
+    image: jenkins-dast:local
+    container_name: jenkins-dast
+    user: root
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins_home:/var/jenkins_home
+      - .:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+    networks:
+      - dast-network
+    depends_on:
+      owasp-zap:
+        condition: service_healthy
+
+volumes:
+  jenkins_home:
+
+networks:
+  dast-network:
+    driver: bridge
+    name: vulpy-dast-network
